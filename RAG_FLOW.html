@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gulf RAG — what actually runs</title>
+<style>
+  :root {
+    --bg: #101311;
+    --panel: #181c19;
+    --line: #2a332c;
+    --text: #e7eee8;
+    --muted: #93a399;
+    --teal: #3dbe9a;
+    --teal-dim: #16382e;
+    --amber: #e2b15a;
+    --rose: #e07a72;
+    --blue: #8eb4d4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 "Avenir Next", "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; justify-content: space-between; gap: 24px; align-items: flex-end;
+    padding: 22px 28px 16px; border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.02em; }
+  header p { margin: 0; color: var(--muted); max-width: 640px; }
+  .local {
+    color: var(--amber); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .scenarios { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 28px; border-bottom: 1px solid var(--line); }
+  .scenarios button, .controls button {
+    background: transparent; color: var(--text); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; font: inherit;
+  }
+  .scenarios button[aria-pressed="true"] { background: var(--teal-dim); border-color: var(--teal); color: var(--teal); }
+  .layout { display: grid; grid-template-columns: 420px 1fr; min-height: calc(100vh - 132px); }
+  .rail { border-right: 1px solid var(--line); padding: 18px 18px 40px; overflow: auto; max-height: calc(100vh - 132px); }
+  .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+  .controls button.primary { background: var(--teal); color: #06231b; border-color: var(--teal); font-weight: 650; }
+  .controls .count { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .step {
+    display: grid; grid-template-columns: 28px 1fr; gap: 10px; cursor: pointer;
+  }
+  .spine { display: flex; flex-direction: column; align-items: center; }
+  .dot {
+    width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line);
+    background: var(--bg); margin-top: 14px; flex: none;
+  }
+  .stem { width: 2px; flex: 1; background: var(--line); min-height: 18px; }
+  .step.active .dot { background: var(--teal); border-color: var(--teal); box-shadow: 0 0 0 4px rgba(61,190,154,.18); }
+  .step.done .dot { background: var(--teal-dim); border-color: var(--teal); }
+  .card {
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 6px 0 8px;
+    background: var(--panel);
+  }
+  .step.active .card { border-color: var(--teal); }
+  .kicker { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .card h2 { font-size: 15px; margin: 2px 0 4px; font-weight: 650; }
+  .card p { margin: 0; color: var(--muted); font-size: 13px; }
+  .badge { display: inline-block; margin-top: 6px; margin-right: 6px; font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+  .ext { background: #3a2a22; color: var(--amber); }
+  .loc { background: #1c2a33; color: var(--blue); }
+  .none { background: #242824; color: var(--muted); }
+  .detail { padding: 22px 28px 64px; overflow: auto; max-height: calc(100vh - 132px); }
+  .detail h2 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.03em; }
+  .lead { color: var(--muted); margin: 0 0 18px; max-width: 68ch; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  section.block {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px;
+  }
+  section.block h3 { margin: 0 0 8px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--teal); }
+  .arrow { display: flex; gap: 10px; align-items: stretch; }
+  .place { flex: 1; background: #101411; border-radius: 10px; padding: 10px 12px; border: 1px solid var(--line); }
+  .place b { display: block; font-size: 12px; color: var(--muted); font-weight: 550; }
+  .mid { align-self: center; color: var(--teal); font-size: 20px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 4px 0; }
+  code, pre { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  code { color: #d5ecdf; font-size: 12.5px; }
+  pre {
+    margin: 0; white-space: pre-wrap; background: #0c0f0d; border-radius: 10px;
+    padding: 12px; color: #d7e6dc; font-size: 12.5px; line-height: 1.45;
+  }
+  .call { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+  .call:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .call strong { font-weight: 650; }
+  a { color: var(--teal); }
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 1fr; }
+    .rail, .detail { max-height: none; }
+    .grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="local">Walkthrough of this repo</div>
+    <h1>What runs, from where, to where</h1>
+    <p>Pick a scenario and press play. Each step is a real handoff in this project: the file, the function, the notes on disk, and whether anything leaves the machine.</p>
+  </div>
+</header>
+<div class="scenarios" id="scenarios"></div>
+<div class="layout">
+  <div class="rail">
+    <div class="controls">
+      <button class="primary" id="play" type="button">Play</button>
+      <button id="prev" type="button">Back</button>
+      <button id="next" type="button">Next</button>
+      <span class="count" id="count"></span>
+    </div>
+    <div id="rail"></div>
+  </div>
+  <div class="detail" id="detail"></div>
+</div>
+<script>
+const scenarios = {
+  ask: {
+    label: "Ask: Dubai Metro",
+    blurb: "First question. History is empty, so nothing is rewritten and the fast model is not called.",
+    steps: [
+      {
+        title: "The page sends the question",
+        where: "Browser",
+        summary: "The form posts the text you typed and the recent turns.",
+        kind: "local",
+        what: "You submit “What card do I need for the Dubai Metro?”. The script clears the box, draws your bubble, and shows “Searching the docs…”. The request stays on your machine, aimed at the FastAPI process.",
+        from: "static/index.html — the input #q and the in-memory history array",
+        to: "POST http://127.0.0.1:8000/chat",
+        code: [
+          ["static/index.html", "form submit listener", "fetch('/chat') with JSON { message, history: history.slice(-8) }"],
+          ["api.py", "ChatIn", "message is required, at most 1000 characters. history is at most 20 turns."]
+        ],
+        docs: "No notes are read yet. The page has not opened docs/.",
+        calls: [
+          ["Local HTTP", "POST /chat", "Body is the question plus up to 8 previous turns. No Anthropic or OpenAI call in the browser. The key never goes in this request."]
+        ],
+        packet: `{
+  "message": "What card do I need for the Dubai Metro?",
+  "history": []
+}`
+      },
+      {
+        title: "FastAPI enters the pipeline",
+        where: "api.py → pipeline.py",
+        summary: "The route turns the JSON into pairs and calls answer().",
+        kind: "local",
+        what: "chat() catches a missing key as 503 and a provider failure as 502. The retrieval config is the one built at startup: fixed chunks of 800, overlap 150, hybrid search, rerank, country filter, k = 5.",
+        from: "api.chat()",
+        to: "pipeline.answer(message, CFG, history)",
+        code: [
+          ["api.py", "chat()", "history = [(role, content), …] then answer(..., verbose=False)"],
+          ["api.py", "CFG", "RAG_CHUNKING, RAG_SIZE, RAG_OVERLAP, RAG_HYBRID, RAG_RERANK, RAG_COUNTRY_FILTER. Defaults are the eval winner."]
+        ],
+        docs: "Still none. The route does not open a markdown file itself.",
+        calls: [
+          ["None yet", "in-process call", "This is a Python function call inside the uvicorn process, not a network request."]
+        ],
+        packet: `CFG.label = "fixed-800+filter+hybrid+rerank"
+collection = "gulf_fixed_800_150"`
+      },
+      {
+        title: "Rewrite is skipped",
+        where: "pipeline.rewrite",
+        summary: "No earlier turn, so the search text is the question itself.",
+        kind: "none",
+        what: "rewrite() returns immediately when history is empty. The fast model is not asked to rephrase a question that is already standalone. On a follow-up, this is the step that changes. Open the Follow-up scenario to see that call.",
+        from: "answer() → rewrite(question, history)",
+        to: "the same string, now called query",
+        code: [
+          ["pipeline.py", "rewrite()", "if not history: return question"],
+          ["pipeline.py", "FAST", "When history exists, complete('claude-haiku-5-5', …, max_tokens=200). OpenAI maps that name to gpt-5.4-nano."]
+        ],
+        docs: "None.",
+        calls: [
+          ["No model call", "skipped", "First question. No request to api.anthropic.com or api.openai.com."]
+        ],
+        packet: `query = "What card do I need for the Dubai Metro?"`
+      },
+      {
+        title: "Country filter chooses UAE",
+        where: "pipeline.detect_country",
+        summary: "“dubai” is in the UAE list and no Oman word is present.",
+        kind: "local",
+        what: "The filter is applied only when exactly one country matches. general notes stay eligible, which is why a packing note can still appear beside a metro note. A name that is not in the lists, such as Burj Khalifa, would skip the filter.",
+        from: "the query string",
+        to: "country = \"uae\", passed into search()",
+        code: [
+          ["pipeline.py", "UAE_WORDS", "includes dubai, abu dhabi, sharjah, emirates, uae"],
+          ["pipeline.py", "detect_country()", "oman and not uae → oman. uae and not oman → uae. both or neither → None"]
+        ],
+        docs: "Does not open files. The country tag was stored earlier from the filename: dubai-metro.md → uae.",
+        calls: [
+          ["None", "string scan", "A word list, not a model."]
+        ],
+        packet: `country = "uae"
+where = {"country": {"$in": ["uae", "general"]}}`
+      },
+      {
+        title: "Embed the question",
+        where: "Local model",
+        summary: "bge-small turns the question into 384 numbers.",
+        kind: "local",
+        what: "search() asks the sentence-transformers model for one normalized vector. The same model embedded the notes at index time, so the spaces match. The model files live in the Hugging Face cache after the first download. A question does not call Hugging Face.",
+        from: "query text",
+        to: "a float vector of length 384",
+        code: [
+          ["pipeline.py", "embedder()", "SentenceTransformer('BAAI/bge-small-en-v1.5'), loaded once"],
+          ["pipeline.py", "search()", "encode([question], normalize_embeddings=True)"]
+        ],
+        docs: "None.",
+        calls: [
+          ["Local compute", "no HTTP", "First launch may have downloaded the weights. After that this step is CPU or GPU on your machine."]
+        ],
+        packet: `n = 20   # candidates, because hybrid and rerank are on
+          # otherwise n would be k, which is 5`
+      },
+      {
+        title: "Chroma vector search",
+        where: "./store",
+        summary: "Nearest chunks in gulf_fixed_800_150, UAE plus general only.",
+        kind: "local",
+        what: "PersistentClient reads the local Chroma database. The query asks for 20 neighbors under cosine distance, with the country filter. n_results is capped at how many chunks actually match, so an empty filter cannot crash the query. If the collection is missing, ingest() builds it first. If it already has chunks, ingest() returns it and does not rebuild.",
+        from: "query vector",
+        to: "up to 20 chunk ids, texts, sources, distances",
+        code: [
+          ["pipeline.py", "_vector_query()", "col.query(query_embeddings, n_results, where, include documents/metadatas/distances)"],
+          ["pipeline.py", "client", "chromadb.PersistentClient(path=store)"]
+        ],
+        docs: "The chunk text was copied into Chroma at index time from docs/dubai-metro.md and the other UAE and general files. The markdown files are not re-read for this search.",
+        calls: [
+          ["Local disk", "SQLite inside ./store", "No vector-database vendor. The server must be the only writer. That is why re-ingest runs in this process."]
+        ],
+        packet: `collection: gulf_fixed_800_150
+hit shape: { id, text, source: "docs/dubai-metro.md", dist }`
+      },
+      {
+        title: "BM25 keyword search",
+        where: "rank_bm25, in memory",
+        summary: "Rare words such as Nol can outrank a vague vector neighbor.",
+        kind: "local",
+        what: "The first time a collection is searched this way, every chunk is loaded out of Chroma and tokenized on word characters. Later questions reuse that cache until a file is re-indexed. Scores at or below zero stop the list. Chunks outside uae/general are dropped. The keyword hits are added to the pool even if the vector search missed them.",
+        from: "tokenized question: what, card, do, i, need, … metro",
+        to: "a second ranked list of chunk ids",
+        code: [
+          ["pipeline.py", "bm25_index()", "BM25Okapi over tok(chunk)"],
+          ["pipeline.py", "search()", "get_scores, then keep those whose country is allowed"]
+        ],
+        docs: "Same stored chunk texts. “Nol” and “red” live in docs/dubai-metro.md.",
+        calls: [
+          ["Local memory", "no HTTP", "The index is rebuilt in-process after a re-index because _bm25_cache drops that collection."]
+        ],
+        packet: `kw = ["docs/dubai-metro.md:0", "..."]  # ids, best keyword first`
+      },
+      {
+        title: "Reciprocal rank fusion",
+        where: "pipeline.rrf",
+        summary: "The two ranked lists become one, using rank rather than raw score.",
+        kind: "local",
+        what: "A chunk that is first in a list scores 1/61. Second scores 1/62. Being near the top of both the vector list and the keyword list beats being first on only one. The constant is 60. Raw BM25 scores and cosine distances are never added together, because they are not on the same scale.",
+        from: "vector id order + keyword id order",
+        to: "one fused order, cut to 20 candidates",
+        code: [
+          ["pipeline.py", "rrf()", "score += 1 / (60 + rank + 1)"],
+          ["pipeline.py", "search()", "order = rrf([order, kw])[:n]"]
+        ],
+        docs: "None.",
+        calls: [
+          ["None", "arithmetic", "No service is called."]
+        ],
+        packet: `fused top starts with the metro chunk
+because it ranks on both lists`
+      },
+      {
+        title: "Cross-encoder rerank",
+        where: "Local model",
+        summary: "bge-reranker-base reads the question and each candidate together.",
+        kind: "local",
+        what: "The bi-encoder compared two vectors that were built separately. The cross-encoder scores the pair, which is slower and more precise. It can only reorder the 20 candidates. It cannot recover a note that never entered the pool. The top 5 survive. k is 5.",
+        from: "20 candidate chunks",
+        to: "5 hits, best first",
+        code: [
+          ["pipeline.py", "reranker()", "CrossEncoder('BAAI/bge-reranker-base')"],
+          ["pipeline.py", "search()", "predict([(question, text), …]) then sort descending and return hits[:cfg.k]"]
+        ],
+        docs: "The winning text is the passage from docs/dubai-metro.md: buy a Nol card, the red card is the tourist one.",
+        calls: [
+          ["Local compute", "no HTTP", "Weights are cached locally after the first download."]
+        ],
+        packet: `hits[0].source = "docs/dubai-metro.md"
+# plus up to 4 other uae/general chunks`
+      },
+      {
+        title: "The answer model is called",
+        where: "llm.complete",
+        summary: "Only these five passages are allowed to support the answer.",
+        kind: "external",
+        what: "The prompt is the five chunks, each prefixed with its path in brackets, then the original question. The system text requires an answer from that context, an exact path citation, or the refusal sentence. With OpenAI selected, claude-sonnet-5-5 is sent as gpt-5.4-mini. With Anthropic, the call is Sonnet, thinking limited, effort low. Temperature is not set.",
+        from: "pipeline.answer() builds the context string",
+        to: "Anthropic or OpenAI, then a text string back",
+        code: [
+          ["pipeline.py", "answer()", "complete(MODEL, system, context + question, max_tokens=1024)"],
+          ["llm.py", "complete()", "active_provider() reads .env on this call"],
+          ["llm.py", "_complete_openai()", "chat.completions.create, max_completion_tokens, reasoning_effort low"],
+          ["llm.py", "_complete_anthropic()", "messages.create. Text blocks are kept. A leading thinking block is ignored."]
+        ],
+        docs: "The model sees excerpts, not the whole docs/ folder. Paths look like [docs/dubai-metro.md].",
+        calls: [
+          ["External", "OpenAI POST https://api.openai.com/v1/chat/completions", "Model gpt-5.4-mini when the Keys panel is on OpenAI. The question and the five chunks leave the machine."],
+          ["External", "or Anthropic POST https://api.anthropic.com/v1/messages", "Model claude-sonnet-5-5 when the provider is Anthropic. Only one of these two runs."]
+        ],
+        packet: `system: Answer ONLY from the context. Cite sources in brackets...
+user: Context:
+[docs/dubai-metro.md]
+The Dubai Metro is the simplest way...
+Question: What card do I need for the Dubai Metro?`
+      },
+      {
+        title: "Citations are resolved",
+        where: "api.py",
+        summary: "Only the path the model cited becomes a source.",
+        kind: "local",
+        what: "Brackets are parsed. docs/dubai-metro.md is kept because it was both cited and retrieved. Other hits are dropped, which is why Visit Oman and u.ae no longer appear under a one-citation answer. The file is opened to read line 1 after “Source:” and the first heading. A refusal that starts with “I don't know based on the provided documents.” returns an empty source list.",
+        from: "answer text + hit list",
+        to: "JSON { answer, query, sources }",
+        code: [
+          ["api.py", "cited_paths()", "regex over [docs/…], split on commas, keep order"],
+          ["api.py", "source_meta()", "reads the markdown file, caches url and title"],
+          ["api.py", "chat()", "if the model cited nothing and did not refuse, the first hit is the fallback"]
+        ],
+        docs: "Reads docs/dubai-metro.md. First line Source: https://www.rta.ae/. First heading: Dubai Metro.",
+        calls: [
+          ["Local disk", "read one markdown file", "No second model call."]
+        ],
+        packet: `{
+  "answer": "You need a Nol card ... [docs/dubai-metro.md]",
+  "query": "What card do I need for the Dubai Metro?",
+  "sources": [{
+    "source": "docs/dubai-metro.md",
+    "title": "Dubai Metro",
+    "url": "https://www.rta.ae/"
+  }]
+}`
+      },
+      {
+        title: "The page draws the chip and the link",
+        where: "static/index.html",
+        summary: "The path becomes a number. The heading becomes the source link.",
+        kind: "local",
+        what: "render() escapes the text, turns **bold** into strong, and replaces a bracket group only when every path inside it is in the sources array. The chip’s number is the position in that list, so a single citation is 1. If the rewritten query differs from what you typed, a “Searched for:” line is added. It is not added on this first question.",
+        from: "the JSON response",
+        to: "the bubble in #log",
+        code: [
+          ["static/index.html", "render()", "idx[source] = position. Cite links use safeUrl, http(s) only."],
+          ["static/index.html", "history.push", "user text and assistant answer are kept for the next turn"]
+        ],
+        docs: "The link href is https://www.rta.ae/. The visible words are the heading, Dubai Metro.",
+        calls: [
+          ["None", "DOM update", "Opening the link is a later click, and it leaves the app for the RTA site."]
+        ],
+        packet: `bubble: "You need a Nol card…"  [1]
+sources: 1. Dubai Metro`
+      }
+    ]
+  },
+  follow: {
+    label: "Follow-up: Friday flight",
+    blurb: "History exists, so the fast model rewrites the question before any search.",
+    steps: [
+      {
+        title: "The page sends the short follow-up",
+        where: "Browser",
+        summary: "The new message is vague. The previous turns go with it.",
+        kind: "local",
+        what: "You already asked about the Dubai Metro. You now ask “What about a Friday morning flight?”. The page posts that sentence plus the stored history, capped at the last 8 turns.",
+        from: "static/index.html history array",
+        to: "POST /chat",
+        code: [
+          ["static/index.html", "submit", "history.slice(-8)"],
+          ["api.py", "Turn", "role is user or assistant, content at most 4000 characters"]
+        ],
+        docs: "None yet.",
+        calls: [
+          ["Local HTTP", "POST /chat", "The follow-up text alone would search badly. The history is how the server can repair it."]
+        ],
+        packet: `{
+  "message": "What about a Friday morning flight?",
+  "history": [
+    {"role": "user", "content": "What card do I need for the Dubai Metro?"},
+    {"role": "assistant", "content": "You need a Nol card…"}
+  ]
+}`
+      },
+      {
+        title: "The fast model rewrites the query",
+        where: "pipeline.rewrite → llm.complete",
+        summary: "This is the call the first-question path skipped.",
+        kind: "external",
+        what: "The last 6 turns are flattened to “user: …” / “assistant: …” lines. Haiku, or gpt-5.4-nano, must return only a standalone search query. The original message is still what the answer model is asked. Search uses the rewrite. The page shows “Searched for:” when those two strings differ.",
+        from: "question + history[-6:]",
+        to: "one search string",
+        code: [
+          ["pipeline.py", "rewrite()", "complete(FAST, rewrite instruction, transcript, 200)"],
+          ["llm.py", "_openai_model()", "claude-haiku* → OPENAI_FAST_MODEL"],
+          ["llm.py", "_complete_anthropic()", "Haiku thinking is disabled, effort low"]
+        ],
+        docs: "None. The rewriter does not see the notes. It only sees the chat.",
+        calls: [
+          ["External", "OpenAI gpt-5.4-nano or Anthropic claude-haiku-5-5", "A short, cheap call. Then the answer model is called later, so a follow-up costs two model requests."]
+        ],
+        packet: `query ≈ "Dubai Metro first train Friday morning flight to the airport"
+# the model’s exact wording varies`
+      },
+      {
+        title: "Search, rerank, answer",
+        where: "Same path as the first question",
+        summary: "Country, Chroma, BM25, fusion, rerank, then the answer model.",
+        kind: "external",
+        what: "detect_country still sees Dubai in the rewritten query, so the filter stays UAE plus general. Embedding, Chroma, BM25, RRF, and the cross-encoder are local. The answer model then sees the metro passage, which says Friday service starts later and a dawn flight should not depend on the metro. A taxi is the backup. The original short question is what appears after “Question:” in the prompt.",
+        from: "rewritten query",
+        to: "POST /v1/chat/completions or /v1/messages, then JSON back to the page",
+        code: [
+          ["pipeline.py", "answer()", "search(query) then complete(MODEL, …, Question: original question)"],
+          ["docs/dubai-metro.md", "the Friday sentence", "Service starts later on Friday. A dawn flight needs a taxi if the metro is not running."]
+        ],
+        docs: "docs/dubai-metro.md is the note that contains the Friday and airport sentences.",
+        calls: [
+          ["Local", "embed, Chroma, BM25, rerank", "No network."],
+          ["External", "answer model", "gpt-5.4-mini or claude-sonnet-5-5. Second paid call of this turn."]
+        ],
+        packet: `Searched for: <rewritten query>
+citation: [docs/dubai-metro.md]`
+      }
+    ]
+  },
+  refuse: {
+    label: "Refusal: Brazil",
+    summary: "",
+    blurb: "The notes do not contain this. The model must use the exact refusal sentence, and the page hides sources.",
+    steps: [
+      {
+        title: "Same request path",
+        where: "Browser → api.chat → answer()",
+        summary: "“What is the population of Brazil?” is a normal /chat post.",
+        kind: "local",
+        what: "Nothing about the route is special. The refusal is decided by the prompt and by what search manages to retrieve, which will be Gulf notes that do not mention Brazil.",
+        from: "static/index.html",
+        to: "pipeline.answer",
+        code: [
+          ["unanswerable.txt", "first line", "What is the population of Brazil?"],
+          ["eval.py", "run_refusal()", "checks that the answer starts with the refusal prefix"]
+        ],
+        docs: "No Brazil note exists in docs/.",
+        calls: [
+          ["Local HTTP", "POST /chat", "History empty, so rewrite makes no model call."]
+        ],
+        packet: `{ "message": "What is the population of Brazil?", "history": [] }`
+      },
+      {
+        title: "No country filter",
+        where: "detect_country",
+        summary: "Brazil is in neither word list.",
+        kind: "local",
+        what: "The function returns None. search() then does not set a where clause, so every note is eligible. That is intentional. Filtering would not create a Brazil document. It would only hide Gulf documents.",
+        from: "the question",
+        to: "country = None",
+        code: [
+          ["pipeline.py", "detect_country()", "neither list matches → None"],
+          ["pipeline.py", "search()", "allowed is None, where is None"]
+        ],
+        docs: "All 16 files are searchable. None of them states a population for Brazil.",
+        calls: [["None", "word list", "No model."]],
+        packet: `country_filter = null
+where = null`
+      },
+      {
+        title: "Retrieval still returns Gulf chunks",
+        where: "Chroma + BM25 + reranker",
+        summary: "The top 5 are the least-bad Gulf passages. They are not an answer.",
+        kind: "local",
+        what: "The pipeline does not have an empty-result shortcut. It always hands the top passages to the model and trusts the instruction. The passages might mention visas or cities. They do not contain the number.",
+        from: "local index ./store",
+        to: "5 hits inside the prompt",
+        code: [
+          ["pipeline.py", "search()", "same hybrid and rerank path, k = 5"]
+        ],
+        docs: "Whichever notes rank highest. They are the wrong country and the wrong fact.",
+        calls: [["Local", "embed, Chroma, BM25, rerank", "No HTTP."]],
+        packet: `hits = 5 gulf chunks
+none contain "Brazil"`
+      },
+      {
+        title: "The model is told to refuse",
+        where: "llm.complete",
+        summary: "The only acceptable miss is one exact sentence.",
+        kind: "external",
+        what: "The system prompt says that if the context does not contain the answer, reply exactly: I don't know based on the provided documents. A helpful paraphrase would fail eval.py --refusal, and the page would also treat it as a normal answer and might show sources.",
+        from: "context of 5 unrelated chunks + the Brazil question",
+        to: "the provider",
+        code: [
+          ["pipeline.py", "REFUSAL", "I don't know based on the provided documents."],
+          ["pipeline.py", "answer()", "that sentence is interpolated into the system prompt"]
+        ],
+        docs: "The model is shown Gulf excerpts and asked not to use outside knowledge.",
+        calls: [
+          ["External", "gpt-5.4-mini or claude-sonnet-5-5", "One paid call. The fast model was not used."]
+        ],
+        packet: `answer = "I don't know based on the provided documents."`
+      },
+      {
+        title: "Sources are removed",
+        where: "api.chat and render()",
+        summary: "A refusal must not look cited.",
+        kind: "local",
+        what: "The answer is checked against the first 20 characters of the refusal, after curly apostrophes are normalized. On a match, sources stays []. The page renders the sentence and draws no source list.",
+        from: "model text",
+        to: "JSON with sources: []",
+        code: [
+          ["api.py", "chat()", "startswith(REFUSAL[:20]) → do not fill sources"],
+          ["static/index.html", "render()", "the source block is added only when sources.length is non-zero"]
+        ],
+        docs: "No markdown file is opened for a title, because nothing is cited.",
+        calls: [["None", "response", "The browser paints one sentence."]],
+        packet: `{
+  "answer": "I don't know based on the provided documents.",
+  "sources": []
+}`
+      }
+    ]
+  },
+  index: {
+    label: "Index the notes",
+    blurb: "Offline. This builds ./store. Asking a question later does not redo it unless the collection is empty.",
+    steps: [
+      {
+        title: "Notes already sit in docs/",
+        where: "docs/*.md",
+        summary: "Sixteen original files. urls.txt does not download them.",
+        kind: "local",
+        what: "Each file starts with Source: and a URL, then a heading and the note. The filename sets the country later. urls.txt is comments only, so python fetch_docs.py exits without touching these files.",
+        from: "the files on disk",
+        to: "pipeline.iter_docs('docs')",
+        code: [
+          ["docs/dubai-metro.md", "line 1 and heading", "Source: https://www.rta.ae/ and # Dubai Metro"],
+          ["urls.txt", "comments", "A filename | url line is what would add a download."],
+          ["fetch_docs.py", "module body", "trafilatura.fetch_url only for non-comment lines. Zero jobs → exit."]
+        ],
+        docs: "oman-*.md, uae-*.md, dubai-*.md, abudhabi-*.md, sharjah-*.md, general-*.md. About 1,500–1,900 characters each.",
+        calls: [
+          ["None in the starter path", "no download", "A real urls.txt line would HTTP GET that page, extract markdown with trafilatura, and write Source: url plus the text."]
+        ],
+        packet: `docs/dubai-metro.md
+docs/oman-salalah.md
+… 16 files`
+      },
+      {
+        title: "Chunk each file",
+        where: "pipeline.chunk_fixed",
+        summary: "800-character windows, step 650, because overlap is 150.",
+        kind: "local",
+        what: "The API’s collection is gulf_fixed_800_150. Heading mode exists and is what eval compares, but it is not the server default. A short note becomes one or two chunks. The gold facts were placed early so a 300-character experiment can still contain them.",
+        from: "full markdown text",
+        to: "a list of strings",
+        code: [
+          ["pipeline.py", "make_chunks()", "fixed → chunk_fixed. heading → chunk_heading, which splits on # / ## / ###"],
+          ["pipeline.py", "chunk_fixed()", "step = size - overlap"]
+        ],
+        docs: "Every file under docs/ with a .md or .txt suffix.",
+        calls: [["None", "string slicing", "No model and no network."]],
+        packet: `collection name includes the chunk settings
+gulf_fixed_800_150
+# a different size would be a different collection`
+      },
+      {
+        title: "Tag country from the filename",
+        where: "pipeline.country_of",
+        summary: "dubai-metro.md becomes uae. general-seasons.md stays general.",
+        kind: "local",
+        what: "Prefixes oman → oman. uae, dubai, abudhabi, sharjah → uae. Anything else → general. The tag is metadata on every chunk of that file. It is not inferred by a model, so a badly named file lands in the wrong filter.",
+        from: "path basename",
+        to: "metadata.country",
+        code: [
+          ["pipeline.py", "country_of()", "startswith checks"],
+          ["pipeline.py", "index_file()", "metadata also stores source and last_updated = today"]
+        ],
+        docs: "The source id is the project-relative path, docs/dubai-metro.md, so citations stay stable.",
+        calls: [["None", "filename rule", "No model."]],
+        packet: `{
+  "source": "docs/dubai-metro.md",
+  "country": "uae",
+  "last_updated": "2026-11-11"
+}`
+      },
+      {
+        title: "Embed every chunk",
+        where: "bge-small, local",
+        summary: "One 384-d vector per chunk, normalized.",
+        kind: "local",
+        what: "encode() runs on the chunk list for that file. The first time, sentence-transformers may download BAAI/bge-small-en-v1.5 from Hugging Face into the local cache. Ingest does not call Anthropic or OpenAI. You can index with both API keys empty.",
+        from: "chunk strings",
+        to: "float vectors",
+        code: [
+          ["pipeline.py", "index_file()", "embedder().encode(chunks, normalize_embeddings=True)"]
+        ],
+        docs: "The full chunk, including the Source line if it fell inside the window.",
+        calls: [
+          ["Local, after the first download", "Hugging Face only if weights are missing", "Not a per-file API."]
+        ],
+        packet: `48 chunks was the count at health-check time
+for the fixed-800 collection`
+      },
+      {
+        title: "Upsert into Chroma",
+        where: "./store",
+        summary: "Ids are path:index. Old chunks for that file are deleted first.",
+        kind: "local",
+        what: "index_file() deletes existing ids whose metadata source is this path, then upserts. An edit cannot leave a stale chunk behind. ingest() creates the collection with cosine space if needed. The result is the folder ./store, which is gitignored.",
+        from: "ids, documents, embeddings, metadatas",
+        to: "Chroma collection gulf_fixed_800_150",
+        code: [
+          ["pipeline.py", "index_file()", "ids = f'{rel}:{i}'"],
+          ["pipeline.py", "ingest()", "create_collection(..., metadata hnsw:space cosine)"],
+          ["rag.py", "separate collection", "The stage-1 script uses a different collection, gulf_travel. The API does not read that one."]
+        ],
+        docs: "Text is copied into the database. The markdown files remain the source you edit.",
+        calls: [
+          ["Local disk", "./store and chroma.sqlite3", "No hosted vector database."]
+        ],
+        packet: `id: docs/dubai-metro.md:0
+embedding: [0.012, …]  # 384 floats`
+      }
+    ]
+  },
+  refresh: {
+    label: "Re-ingest changes",
+    blurb: "Hash the files. Rewrite and re-embed only what changed. A failed download keeps the old note.",
+    steps: [
+      {
+        title: "Optional page download",
+        where: "reingest.refresh_from_urls",
+        summary: "python reingest.py fetches. The API’s --no-fetch path does not.",
+        kind: "external",
+        what: "Each non-comment line in urls.txt is fetched with trafilatura. Success overwrites docs/<name>.md, starting with Source: url. Failure prints a message and leaves the existing file. The starter urls.txt has no such lines, so this step is a no-op until you add one.",
+        from: "urls.txt",
+        to: "docs/<name>.md",
+        code: [
+          ["reingest.py", "refresh_from_urls()", "trafilatura.fetch_url then extract"],
+          ["fetch_docs.py", "same rule", "used when you only want the download, not the index"]
+        ],
+        docs: "The destination file in docs/.",
+        calls: [
+          ["External HTTP GET", "only the URLs you listed", "The tourism site, not the LLM provider. The current urls.txt triggers no GET."]
+        ],
+        packet: `# urls.txt
+# dubai-metro | https://www.rta.ae/`
+      },
+      {
+        title: "Compare SHA-256 with the manifest",
+        where: "reingest.sync",
+        summary: "Unchanged files are not embedded again.",
+        kind: "local",
+        what: "Every doc is hashed. manifest.json remembers the previous hashes. Changed paths go through index_file(). Paths that disappeared are deleted from Chroma by source metadata. The BM25 cache for that collection is dropped. The first run, with no manifest, indexes everything and then writes the file. manifest.json is gitignored.",
+        from: "docs/ + manifest.json",
+        to: "Chroma updates for the diff only",
+        code: [
+          ["reingest.py", "sha()", "hashlib.sha256 of the file bytes"],
+          ["reingest.py", "sync()", "index_file on changed, col.delete on removed"],
+          ["api.py", "POST /admin/reingest", "404 if ADMIN_TOKEN is unset. Otherwise header X-Admin-Token."]
+        ],
+        docs: "Only the changed markdown is re-read and re-chunked.",
+        calls: [
+          ["Local", "disk and Chroma", "REINGEST_HOURS inside the server calls the same sync. A second process should not open ./store while uvicorn is running."]
+        ],
+        packet: `{
+  "changed": ["docs/dubai-metro.md"],
+  "removed": []
+}`
+      }
+    ]
+  },
+  keys: {
+    label: "Save a provider",
+    blurb: "The browser never receives the key back. The next question reads .env again.",
+    steps: [
+      {
+        title: "The page asks what is already saved",
+        where: "GET /settings",
+        summary: "Booleans only.",
+        kind: "local",
+        what: "On load, the page fetches /settings. The response says which provider is active and whether each key is non-empty. The header becomes “OpenAI · UAE & Oman” or the Anthropic equivalent. The key strings are not in the JSON.",
+        from: "static/index.html loadSettings()",
+        to: "llm.public_settings()",
+        code: [
+          ["static/index.html", "loadSettings()", "fetch('/settings')"],
+          ["llm.py", "public_settings()", "anthropic_key_set and openai_key_set are booleans"],
+          ["llm.py", "setting()", ".env wins over the shell when the value is non-empty"]
+        ],
+        docs: "None.",
+        calls: [
+          ["Local HTTP", "GET /settings", "Reads .env inside the server process."]
+        ],
+        packet: `{
+  "provider": "openai",
+  "anthropic_key_set": false,
+  "openai_key_set": true,
+  "openai_model": "gpt-5.4-mini"
+}`
+      },
+      {
+        title: "Save writes .env and drops cached clients",
+        where: "POST /settings",
+        summary: "A blank password box does not erase a key.",
+        kind: "local",
+        what: "The panel sends the provider and the two fields. update_settings() writes only the values that are non-empty, so leaving a box blank keeps the saved key. The Anthropic and OpenAI client objects are set to None, so the next call builds a client with the new key. uvicorn does not reload.",
+        from: "the Keys form",
+        to: ".env on disk",
+        code: [
+          ["static/index.html", "save-keys click", "POST JSON, then clear the password boxes"],
+          ["api.py", "save_settings()", "update_settings({LLM_PROVIDER, ANTHROPIC_API_KEY, OPENAI_API_KEY})"],
+          ["llm.py", "update_settings()", "rewrites .env and clears _anthropic and _openai"]
+        ],
+        docs: "None. .env is gitignored.",
+        calls: [
+          ["Local HTTP", "POST /settings", "No call to the model vendor until the next question."]
+        ],
+        packet: `LLM_PROVIDER=openai
+ANTHROPIC_API_KEY=        # kept if you sent ""
+OPENAI_API_KEY=          # kept if you sent ""
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_FAST_MODEL=gpt-5.4-nano
+OPENAI_JUDGE_MODEL=gpt-5.4`
+      },
+      {
+        title: "The next question takes the branch",
+        where: "llm.complete",
+        summary: "Claude names stay in pipeline.py. The provider decides the HTTP API.",
+        kind: "external",
+        what: "complete() calls active_provider() again, which re-reads .env. OpenAI maps sonnet→gpt-5.4-mini, haiku→gpt-5.4-nano, opus→gpt-5.4. A name that already starts with gpt- or o is used as itself, which is how JUDGE_MODEL can point at a specific OpenAI model. If reasoning_effort is rejected, that one request is retried without it.",
+        from: ".env",
+        to: "exactly one vendor",
+        code: [
+          ["llm.py", "_openai_model()", "the name map"],
+          ["llm.py", "_complete_openai()", "https://api.openai.com/v1/chat/completions via the SDK"],
+          ["llm.py", "_complete_anthropic()", "https://api.anthropic.com/v1/messages via the SDK"],
+          ["judge.py", "JUDGE", "Only judge.py uses the opus / gpt-5.4 role. A normal question does not."]
+        ],
+        docs: "The chunks selected for that question are what get sent. Not the whole corpus.",
+        calls: [
+          ["External, on the next /chat", "one of the two URLs above", "Embeddings and the reranker still do not use this key."]
+        ],
+        packet: `answer role   claude-sonnet-5-5  →  gpt-5.4-mini
+rewrite role  claude-haiku-5-5   →  gpt-5.4-nano
+judge role    claude-opus-5-5    →  gpt-5.4`
+      }
+    ]
+  }
+};
+
+const scenarioButtons = document.getElementById("scenarios");
+const rail = document.getElementById("rail");
+const detail = document.getElementById("detail");
+const count = document.getElementById("count");
+const playButton = document.getElementById("play");
+let current = "ask";
+let index = 0;
+let timer = null;
+
+function kindClass(kind) {
+  if (kind === "external") return "ext";
+  if (kind === "local") return "loc";
+  return "none";
+}
+function kindLabel(kind) {
+  if (kind === "external") return "Leaves the machine";
+  if (kind === "local") return "Stays local";
+  return "No call";
+}
+
+function renderRail() {
+  const steps = scenarios[current].steps;
+  rail.innerHTML = steps.map((step, i) => `
+    <div class="step ${i === index ? "active" : ""} ${i < index ? "done" : ""}" data-i="${i}">
+      <div class="spine"><div class="dot"></div><div class="stem"></div></div>
+      <div class="card">
+        <div class="kicker">${step.where}</div>
+        <h2>${i + 1}. ${step.title}</h2>
+        <p>${step.summary}</p>
+        <span class="badge ${kindClass(step.kind)}">${kindLabel(step.kind)}</span>
+      </div>
+    </div>
+  `).join("");
+  count.textContent = `${index + 1} / ${steps.length}`;
+  const active = rail.querySelector(".step.active");
+  if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+function renderDetail() {
+  const scenario = scenarios[current];
+  const step = scenario.steps[index];
+  detail.innerHTML = `
+    <div class="kicker">${scenario.label}</div>
+    <h2>${step.title}</h2>
+    <p class="lead">${scenario.blurb}</p>
+    <section class="block">
+      <h3>What is happening</h3>
+      <p>${step.what}</p>
+    </section>
+    <section class="block">
+      <h3>From where, to where</h3>
+      <div class="arrow">
+        <div class="place"><b>From</b>${step.from}</div>
+        <div class="mid">→</div>
+        <div class="place"><b>To</b>${step.to}</div>
+      </div>
+    </section>
+    <div class="grid">
+      <section class="block">
+        <h3>Code</h3>
+        <ul>${step.code.map(([file, fn, note]) => `<li><code>${file}</code> · <code>${fn}</code><br>${note}</li>`).join("")}</ul>
+      </section>
+      <section class="block">
+        <h3>Docs</h3>
+        <p>${step.docs}</p>
+      </section>
+    </div>
+    <section class="block">
+      <h3>Calls</h3>
+      ${step.calls.map(([kind, name, note]) => `<div class="call"><strong>${kind}</strong> · ${name}<br>${note}</div>`).join("")}
+    </section>
+    <section class="block">
+      <h3>What the data looks like here</h3>
+      <pre>${step.packet.replace(/</g, "&lt;")}</pre>
+    </section>
+  `;
+}
+
+function show(i) {
+  const steps = scenarios[current].steps;
+  index = Math.max(0, Math.min(steps.length - 1, i));
+  renderRail();
+  renderDetail();
+  if (index === steps.length - 1) stop();
+}
+
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  playButton.textContent = "Play";
+}
+
+function play() {
+  if (timer) { stop(); return; }
+  if (index >= scenarios[current].steps.length - 1) show(0);
+  playButton.textContent = "Pause";
+  timer = setInterval(() => show(index + 1), 1600);
+}
+
+scenarioButtons.innerHTML = Object.entries(scenarios).map(([id, scenario]) =>
+  `<button type="button" data-id="${id}" aria-pressed="${id === current}">${scenario.label}</button>`
+).join("");
+
+scenarioButtons.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  stop();
+  current = button.dataset.id;
+  for (const el of scenarioButtons.querySelectorAll("button")) {
+    el.setAttribute("aria-pressed", el === button ? "true" : "false");
+  }
+  show(0);
+});
+rail.addEventListener("click", (event) => {
+  const step = event.target.closest(".step");
+  if (!step) return;
+  stop();
+  show(Number(step.dataset.i));
+});
+playButton.addEventListener("click", play);
+document.getElementById("prev").addEventListener("click", () => { stop(); show(index - 1); });
+document.getElementById("next").addEventListener("click", () => { stop(); show(index + 1); });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowRight") { stop(); show(index + 1); }
+  if (event.key === "ArrowLeft") { stop(); show(index - 1); }
+  if (event.key === " ") { event.preventDefault(); play(); }
+});
+show(0);
+</script>
+</body>
+</html>
