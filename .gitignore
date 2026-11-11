@@ -1,0 +1,11 @@
+.env
+.venv/
+store/
+__pycache__/
+manifest.json
+.DS_Store
+*.pyc
+.cache/
+files0/
+files1/
+files2/

@@ -1,0 +1,9 @@
+# One page per line:  filename | url
+# filename becomes docs/<filename>.md. For the country filter, start names with
+# oman, uae, dubai, abudhabi, or sharjah. Anything else is tagged general.
+#
+# A starter corpus is already in docs/, so ingest and the API run before you
+# add URLs. A failed download keeps the file that is already there.
+#
+# oman-visa | https://www.rop.gov.om/
+# dubai-metro | https://www.rta.ae/

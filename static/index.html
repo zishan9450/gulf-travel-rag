@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gulf Travel Assistant</title>
+<style>
+  :root { --bg:#faf9f6; --card:#fff; --ink:#1d1d1b; --muted:#6b6a65; --line:#e4e2dc; --accent:#0f6e56; --accent-ink:#fff; --user:#e8f3ef; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161615; --card:#201f1d; --ink:#ecebe6; --muted:#9a988f; --line:#33322e; --accent:#3fb593; --accent-ink:#0b1f19; --user:#1f3a32; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 system-ui,-apple-system,sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); font-weight:600; }
+  header span { color:var(--muted); font-weight:400; font-size:14px; margin-left:8px; }
+  #log { flex:1; overflow-y:auto; padding:20px; max-width:760px; width:100%; margin:0 auto; }
+  .msg { margin:0 0 18px; max-width:92%; }
+  .msg.user { margin-left:auto; background:var(--user); padding:10px 14px; border-radius:14px; width:fit-content; }
+  .msg.bot { background:var(--card); border:1px solid var(--line); padding:12px 16px; border-radius:14px; }
+  .meta { color:var(--muted); font-size:13px; margin-top:10px; }
+  .src { font-size:13px; margin-top:4px; }
+  a { color:var(--accent); }
+  a.cite { text-decoration:none; background:var(--user); border-radius:4px; padding:0 5px; margin:0 1px; font-size:13px; font-weight:600; }
+  #keys { max-width:760px; width:100%; margin:0 auto; padding:10px 20px 0; font-weight:400; }
+  #keys summary { cursor:pointer; color:var(--muted); font-size:14px; }
+  #keys .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:end; }
+  #keys label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); flex:1; min-width:180px; }
+  #keys input, #keys select { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
+  #keys button { padding:8px 14px; align-self:end; border:0; border-radius:10px; background:var(--accent); color:var(--accent-ink); font:inherit; font-weight:600; cursor:pointer; }
+  #key-status { font-size:13px; color:var(--muted); margin:8px 0 0; }
+  form { display:flex; gap:8px; padding:14px 20px; border-top:1px solid var(--line); max-width:760px; width:100%; margin:0 auto; }
+  form input { flex:1; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); font:inherit; }
+  form button { padding:0 20px; border:0; border-radius:10px; background:var(--accent); color:var(--accent-ink); font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .hint { color:var(--muted); text-align:center; margin-top:15vh; }
+</style>
+</head>
+<body>
+<header>Gulf Travel Assistant<span id="who">UAE &amp; Oman</span></header>
+<details id="keys">
+  <summary>Keys</summary>
+  <div class="row">
+    <label>Provider
+      <select id="provider">
+        <option value="anthropic">Anthropic</option>
+        <option value="openai">OpenAI</option>
+      </select>
+    </label>
+    <label>Anthropic key
+      <input id="anth-key" type="password" maxlength="300" autocomplete="off" placeholder="blank keeps saved key">
+    </label>
+    <label>OpenAI key
+      <input id="oai-key" type="password" maxlength="300" autocomplete="off" placeholder="blank keeps saved key">
+    </label>
+    <button type="button" id="save-keys">Save</button>
+  </div>
+  <p id="key-status"></p>
+</details>
+<div id="log"><p class="hint">Ask about visas, the best time to visit, transport, etiquette&hellip;</p></div>
+<form id="f"><input id="q" placeholder="e.g. When is Salalah green?" autocomplete="off" maxlength="1000" autofocus><button id="go">Ask</button></form>
+<script>
+const log = document.getElementById('log'), q = document.getElementById('q'), go = document.getElementById('go');
+const history = [];
+const esc = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
+
+function add(cls, html) {
+  const hint = log.querySelector('.hint'); if (hint) hint.remove();
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+
+function render(text, sources) {
+  const idx = {}; sources.forEach((s, i) => idx[s.source] = i);
+  let html = esc(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\[([^\]]+)\]/g, (m, inner) => {
+    const parts = inner.split(/,\s*/).map(p => p.trim());
+    if (parts.some(p => idx[p] === undefined)) return m;
+    return parts.map(p => {
+      const s = sources[idx[p]], u = safeUrl(s.url);
+      const label = s.title || s.source;
+      return u ? `<a class="cite" href="${esc(u)}" title="${esc(label)}" target="_blank" rel="noopener">${idx[p]+1}</a>`
+               : `<a class="cite" title="${esc(label)}">${idx[p]+1}</a>`;
+    }).join('');
+  });
+  html = html.replace(/\n/g, '<br>');
+  if (sources.length) {
+    html += '<div class="meta">Sources</div>' + sources.map((s, i) => {
+      const u = safeUrl(s.url);
+      const label = s.title || s.source;
+      return `<div class="src">${i+1}. ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label)}</div>`;
+    }).join('');
+  }
+  return html;
+}
+
+const provider = document.getElementById('provider');
+const anthKey = document.getElementById('anth-key');
+const oaiKey = document.getElementById('oai-key');
+const keyStatus = document.getElementById('key-status');
+const who = document.getElementById('who');
+
+function describe(s) {
+  const name = s.provider === 'openai' ? 'OpenAI' : 'Anthropic';
+  const bits = [name];
+  bits.push(s.anthropic_key_set ? 'Anthropic key saved' : 'no Anthropic key');
+  bits.push(s.openai_key_set ? 'OpenAI key saved' : 'no OpenAI key');
+  return bits.join(' · ');
+}
+
+async function loadSettings() {
+  const r = await fetch('/settings');
+  if (!r.ok) return;
+  const s = await r.json();
+  provider.value = s.provider === 'openai' ? 'openai' : 'anthropic';
+  who.textContent = (s.provider === 'openai' ? 'OpenAI' : 'Anthropic') + ' · UAE & Oman';
+  keyStatus.textContent = describe(s) + '. A blank box keeps the key already saved. The next question uses this provider.';
+}
+
+document.getElementById('save-keys').addEventListener('click', async () => {
+  const button = document.getElementById('save-keys');
+  button.disabled = true;
+  try {
+    const r = await fetch('/settings', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        provider: provider.value,
+        anthropic_api_key: anthKey.value.trim(),
+        openai_api_key: oaiKey.value.trim(),
+      }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    anthKey.value = '';
+    oaiKey.value = '';
+    const s = await r.json();
+    who.textContent = (s.provider === 'openai' ? 'OpenAI' : 'Anthropic') + ' · UAE & Oman';
+    keyStatus.textContent = 'Saved. ' + describe(s) + '.';
+  } catch (err) {
+    keyStatus.textContent = String(err.message || err);
+  }
+  button.disabled = false;
+});
+loadSettings();
+
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const text = q.value.trim(); if (!text) return;
+  q.value = ''; go.disabled = true;
+  add('user', esc(text));
+  const wait = add('bot', '<span class="meta">Searching the docs&hellip;</span>');
+  try {
+    const r = await fetch('/chat', { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify({ message: text, history: history.slice(-8) }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    const d = await r.json();
+    wait.innerHTML = render(d.answer, d.sources) +
+      (d.query !== text ? `<div class="meta">Searched for: ${esc(d.query)}</div>` : '');
+    history.push({role:'user', content:text}, {role:'assistant', content:d.answer});
+  } catch (err) {
+    wait.innerHTML = `<span class="meta">Something went wrong: ${esc(String(err.message || err))}</span>`;
+  }
+  go.disabled = false; q.focus(); log.scrollTop = log.scrollHeight;
+});
+</script>
+</body>
+</html>
