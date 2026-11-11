@@ -60,8 +60,10 @@ gulf-rag/
 ├── urls.txt                 # "filename | url" lines for fetch_docs.py / reingest.py
 ├── fetch_docs.py            # Stage 1: download pages into docs/
 ├── rag.py                   # Stage 1: minimal RAG (~40 lines of logic)
+├── llm.py                   # Anthropic or OpenAI; one complete() for every generation call
+├── .env.example             # provider and key names; the real .env stays untracked
 ├── pipeline.py              # Stage 2/3: configurable pipeline (all techniques)
-├── gen_evalset.py           # Stage 2: draft an eval set with Claude
+├── gen_evalset.py           # Stage 2: draft an eval set with the selected model
 ├── eval.py                  # Stage 2: experiment grid + refusal test
 ├── unanswerable.txt         # Stage 2: questions the docs can't answer
 ├── api.py                   # Stage 3: FastAPI service
@@ -82,12 +84,30 @@ gulf-rag/
 | Vector store | ChromaDB (local), then Postgres + pgvector |
 | Keyword search | `rank_bm25` (Chroma path), Postgres full-text search (pgvector path) |
 | Reranker | `BAAI/bge-reranker-base` (cross-encoder) |
-| Answer generation | `claude-sonnet-5-5` |
-| Query rewriting | `claude-haiku-5-5` |
-| Eval question generation | `claude-sonnet-5-5` |
-| Faithfulness judge | `claude-opus-5-5` (override with `JUDGE_MODEL`) |
+| Answer generation | `claude-sonnet-5-5`, or `gpt-5.4-mini` on OpenAI |
+| Query rewriting | `claude-haiku-5-5`, or `gpt-5.4-nano` on OpenAI |
+| Eval question generation | same model as answers |
+| Faithfulness judge | `claude-opus-5-5`, or `gpt-5.4` on OpenAI (`JUDGE_MODEL` overrides the name) |
 | Web page extraction | `trafilatura` |
 | Serving | FastAPI + uvicorn, vanilla JS chat page |
+
+### Switching between Anthropic and OpenAI
+
+`llm.py` is the only place that talks to a provider. `rag.py`, `pipeline.py`, `gen_evalset.py`, and `judge.py` still pass Claude model names into `complete()`. When `LLM_PROVIDER=openai`, those names are mapped:
+
+| Role | Name the code passes | OpenAI model |
+|---|---|---|
+| Answers and eval-set drafts | `claude-sonnet-5-5` | `OPENAI_MODEL`, default `gpt-5.4-mini` |
+| Query rewrite | `claude-haiku-5-5` | `OPENAI_FAST_MODEL`, default `gpt-5.4-nano` |
+| Judge | `claude-opus-5-5`, or whatever `JUDGE_MODEL` is | `OPENAI_JUDGE_MODEL`, default `gpt-5.4`, unless `JUDGE_MODEL` is already a `gpt-` or `o` name |
+
+Both keys can stay filled in. Change `LLM_PROVIDER` to `anthropic` or `openai` and the next question uses that provider. `.env` is read on every call, and a non-empty value there wins over the shell, so you do not restart the server. A blank key field in the chat page keeps the key already saved.
+
+Copy `.env.example` to `.env`, or use the Keys panel on the chat page. `GET /settings` reports which provider is active and whether each key is set. It never returns the key. `.env` is gitignored.
+
+Anthropic calls do not set temperature. Haiku has thinking disabled and low effort. Sonnet uses between-tools thinking and low effort. Opus uses medium effort and a larger token budget. A reply can start with a thinking block, so the text block is what gets returned.
+
+OpenAI uses Chat Completions and `max_completion_tokens`. Reasoning effort is low, or medium when the call was mapped from Opus. If a model rejects `reasoning_effort`, that request is retried once without it. A missing key is a `503`. A provider rejection is a `502`.
 
 ---
 
@@ -97,10 +117,12 @@ gulf-rag/
 
 ```bash
 cd gulf-rag
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=your_key_here
+cp .env.example .env
 ```
+
+Put an Anthropic key, an OpenAI key, or both in `.env`, and set `LLM_PROVIDER`. You can also paste the keys into the Keys panel after the server is running. The first run downloads the embedding and reranker models. Those stay local. The question and the retrieved notes are sent to the provider you selected.
 
 ### Build the corpus
 
@@ -126,7 +148,7 @@ python rag.py          # interactive Q&A
 - `chunk()`: fixed-size windows of 800 characters with 150 overlap.
 - `ingest()`: embeds chunks with bge-small and upserts into a Chroma collection with the source path as metadata.
 - `retrieve()`: embeds the question and returns the top-k chunks with distances.
-- `ask()`: prints each retrieved chunk with its distance (lower is more similar), builds a context block, and asks Claude to answer **only** from the context, cite sources in brackets, and say it doesn't know otherwise.
+- `ask()`: prints each retrieved chunk with its distance (lower is more similar), builds a context block, and asks the selected model to answer **only** from the context, cite sources in brackets, and say it doesn't know otherwise.
 
 ### Sanity checks
 
@@ -164,7 +186,7 @@ Each (chunking, size, overlap) combination gets its own Chroma collection, so ex
 - **Country detection:** a keyword check on the question (Muscat, Salalah, Khareef, etc. for Oman; Dubai, Abu Dhabi, UAE, etc. for the UAE). A filter is applied only when exactly one country is detected; the filter always also allows `general` docs.
 - **Hybrid search:** BM25 over all chunks plus vector search, merged with **RRF** (`score = sum of 1 / (60 + rank)` across the two rankings). Vectors are weak on exact terms such as "Khareef" or a specific visa name; BM25 is strong there.
 - **Reranking:** a cross-encoder scores each (question, chunk) pair jointly, which is slower but more accurate than comparing separate embeddings. It can only reorder candidates, so it helps only if the right chunk is already in the top 20.
-- **Query rewriting:** Haiku turns a follow-up like "what about in summer?" into a standalone query using recent chat history.
+- **Query rewriting:** the fast model (Haiku, or `gpt-5.4-nano` on OpenAI) turns a follow-up like "what about in summer?" into a standalone query using recent chat history.
 - **Refusal contract:** the system prompt requires the exact sentence `I don't know based on the provided documents.` when the context lacks the answer, which makes refusals machine-checkable.
 
 ### `gen_evalset.py`: draft an eval set
@@ -173,7 +195,7 @@ Each (chunking, size, overlap) combination gets its own Chroma collection, so ex
 python gen_evalset.py 30
 ```
 
-Samples 1200-character windows from your docs (round-robin so every doc is covered) and asks Claude for a question plus a short **verbatim snippet** (at most 10 words) containing the answer. Entries whose snippet is not actually in the window are discarded. Output: `evalset.jsonl`.
+Samples 1200-character windows from your docs (round-robin so every doc is covered) and asks the answer model for a question plus a short **verbatim snippet** (at most 10 words) containing the answer. Entries whose snippet is not actually in the window are discarded. Output: `evalset.jsonl`. This call spends API credit on whichever provider is selected. The retrieval grid in `eval.py` does not.
 
 **You must review this file by hand** and delete vague or ambiguous questions. A bad eval set gives misleading numbers.
 
@@ -235,7 +257,9 @@ Open `http://localhost:8000`.
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | the chat page |
-| `GET /health` | active config label and chunk count |
+| `GET /health` | config label, chunk count, and active provider |
+| `GET /settings` | provider, and whether each key is saved |
+| `POST /settings` | `{provider, anthropic_api_key, openai_api_key}`; a blank key keeps the saved one |
 | `POST /chat` | `{message, history}` in; `{answer, query, sources}` out |
 | `POST /admin/reingest` | triggers re-ingest; requires `ADMIN_TOKEN` env var and `X-Admin-Token` header (404 if no token configured) |
 
@@ -244,8 +268,9 @@ Open `http://localhost:8000`.
 - Set the `RAG_*` env vars to your **eval winner**; the defaults are hybrid + rerank + country filter on fixed-800.
 - Models are warmed up at startup (disable with `WARMUP=0`), so the first question isn't slow.
 - Input limits: message up to 1000 characters, history up to 20 turns.
-- LLM provider errors return a clean `502`.
-- **Citations:** the model cites `[docs/file.md]`; the server maps each source to the URL stored on the first line of the file; the UI turns citations into numbered links and lists the sources. When the model refuses, no sources are shown.
+- A missing key returns `503`. A provider error returns `502`.
+- The header shows which provider the next question will use. Saving the Keys panel writes `.env` and applies on the next question.
+- **Citations:** the model cites `[docs/file.md]`; the server maps each cited file to the URL and the first heading in that file; the UI turns those citations into numbered links and lists only those pages. When the model refuses, no sources are shown.
 - The UI escapes all text before rendering and only allows `http(s)` links. It supports light and dark mode and keeps recent history so follow-ups work with query rewriting. It displays "Searched for: ..." when the query was rewritten.
 
 **Not included (worth adding before going public):** streaming responses, authentication, rate limiting. Each request costs API money.
@@ -276,7 +301,7 @@ How it works:
 python judge.py 20 --hybrid --rerank --country-filter
 ```
 
-For each sampled eval question it generates an answer, then a stronger judge model:
+For each sampled eval question it generates an answer with the answer model, then a stronger judge model. On OpenAI, a `claude-opus` judge name is sent to `OPENAI_JUDGE_MODEL`. Set `JUDGE_MODEL` to a `gpt-` name if you want a specific OpenAI judge. The judge:
 
 1. breaks the answer into atomic claims,
 2. checks each claim against the retrieved context only (common knowledge not in the context counts as **unsupported**),
@@ -309,7 +334,7 @@ The eval script reports R@5 and MRR with and without reranking so you can compar
 
 ```bash
 # Setup
-pip install -r requirements.txt && export ANTHROPIC_API_KEY=...
+pip install -r requirements.txt && cp .env.example .env   # then fill in one or both keys
 
 # Corpus
 python fetch_docs.py
@@ -336,7 +361,8 @@ docker compose up -d && python pgvector_demo.py ingest && python pgvector_demo.p
 
 ## 8. Known limitations and caveats
 
-- **Testing status:** the chunking, rank-fusion and country-detection logic and the API routes (with a stubbed pipeline) were tested. The full pipeline with real embedding/reranker models, the Chroma store, and Postgres were **not** run end to end in the build environment. Expect to fix a small bug or two on the first real run.
+- **Providers:** retrieval does not care which model answers. Generation, rewriting, eval-set drafts, the refusal check, and the judge all follow `LLM_PROVIDER`. Embeddings and the reranker stay local either way.
+- The retrieval grid, the chat against the starter corpus, and both providers have been run locally. `python eval.py` without `--refusal` does not call a paid model.
 - `chunk_fixed` can produce a tiny trailing chunk because of the overlap.
 - Country detection is keyword-based, so unusual place names or mixed-country questions fall back to no filter.
 - Snippet-based scoring can miss answers that straddle a chunk boundary (affects small chunk sizes most).
